@@ -54,17 +54,18 @@ def check_transcription_job_status(job_name):
 # Streamlit UI components
 st.title("Voice to Text Transcription App")
 
-st.write("Record your voice, and we will transcribe it for you!")
+st.write("Upload your audio file, and we will transcribe it for you!")
 
-# Audio recorder in Streamlit
-audio_bytes = st.audio_recorder()
+# File uploader in Streamlit
+audio_file = st.file_uploader("Upload an audio file", type=["wav"])
 
-if audio_bytes:
-    st.success("Audio recorded successfully!")
+if audio_file is not None:
+    audio_bytes = audio_file.read()
     audio_file_path = save_audio_file(audio_bytes, "recording.wav")
+    st.success("Audio file uploaded successfully!")
 
     # Upload to S3
-    bucket_name = "your-s3-bucket-name"  # replace with your S3 bucket name
+    bucket_name = "audiobucketdemo"  # replace with your S3 bucket name
     object_name = "recordings/recording.wav"
     upload_to_s3(audio_file_path, bucket_name, object_name)
     st.success(f"File uploaded to S3 bucket '{bucket_name}' successfully!")
@@ -84,7 +85,7 @@ if audio_bytes:
         # Construct the URL for the output file in S3
         output_url = f"https://{bucket_name}.s3.amazonaws.com/{output_key}"
         st.write("Download your transcription:")
-        st.markdown(f"[Download transcription](output_url)", unsafe_allow_html=True)
+        st.markdown(f"[Download transcription]({output_url})", unsafe_allow_html=True)
 
     elif status == 'FAILED':
         st.error("Transcription job failed. Please try again.")
