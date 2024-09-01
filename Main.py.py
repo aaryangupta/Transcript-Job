@@ -5,6 +5,7 @@ import time
 import requests  # to fetch the transcript from S3 URL
 from pydub import AudioSegment
 from pydub.utils import which
+from datetime import datetime  # for generating unique job names
 
 # Configure FFmpeg path manually if not detected
 ffmpeg_path = which("ffmpeg")
@@ -65,6 +66,11 @@ def download_and_extract_transcript(transcript_uri):
     transcript_text = transcript_json['results']['transcripts'][0]['transcript']
     return transcript_text
 
+# Function to generate a unique transcription job name
+def generate_transcribe_job_name(base_name="TranscriptionJob"):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    return f"{base_name}_{timestamp}"
+
 # Streamlit UI setup
 st.title("Voice to Text Transcription System")
 
@@ -84,7 +90,7 @@ if audio_file is not None:
 
     # Start transcription job
     s3_audio_uri = f's3://{bucket_name}/{s3_key}'
-    transcribe_job_name = 'newaudiovoice'  # Replace with a unique job name
+    transcribe_job_name = generate_transcribe_job_name()  # Automatically generate a unique job name
     start_transcription_job(transcribe_job_name, s3_audio_uri)
 
     # Fetch transcription result
