@@ -1,111 +1,95 @@
 import streamlit as st
 import boto3
-import os
-import time
-import requests  # to fetch the transcript from S3 URL
+import requests
 from pydub import AudioSegment
-from pydub.utils import which
-from datetime import datetime  # for generating unique job names
+import os
 
-# Configure FFmpeg path manually if not detected
-ffmpeg_path = which("ffmpeg")
-if ffmpeg_path is None:
-    ffmpeg_path = "C:\\ffmpeg\\bin\\ffmpeg.exe"  # Replace with the actual path to ffmpeg.exe on your machine
-AudioSegment.converter = ffmpeg_path
+# Initialize AWS credentials using Streamlit secrets
+aws_access_key_id = st.secrets["aws_access_key_id"]
+aws_secret_access_key = st.secrets["aws_secret_access_key"]
+region_name = st.secrets["aws_region"]
 
-# Function to save the uploaded audio file
-def save_audio_file(audio_bytes, file_name):
-    with open(file_name, "wb") as f:
+# Initialize S3 and Transcribe clients
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key,
+    region_name=region_name
+)
+
+transcribe_client = boto3.client(
+    'transcribe',
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key,
+    region_name=region_name
+)
+
+# Function to save audio file locally
+def save_audio_file(audio_bytes, filename):
+    with open(filename, "wb") as f:
         f.write(audio_bytes)
-    return file_name
+    return filename
 
-# Function to upload the audio file to S3
-def upload_to_s3(file_name, bucket_name, s3_key):
-    s3_client = boto3.client('s3')
-    try:
-        s3_client.upload_file(file_name, bucket_name, s3_key)
-        st.success(f"Uploaded {file_name} to S3 bucket {bucket_name} with key {s3_key}.")
-    except Exception as e:
-        st.error(f"Failed to upload to S3: {e}")
+# Function to upload file to S3
+def upload_to_s3(filename, bucket_name, object_name):
+    s3_client.upload_file(filename, bucket_name, object_name)
 
-# Function to start transcription job using AWS Transcribe
-def start_transcription_job(job_name, file_uri):
-    transcribe_client = boto3.client('transcribe')
-    try:
-        transcribe_client.start_transcription_job(
-            TranscriptionJobName=job_name,
-            Media={'MediaFileUri': file_uri},
-            MediaFormat='wav',
-            LanguageCode='en-US'
-        )
-        st.info(f"Transcription job '{job_name}' started.")
-    except Exception as e:
-        st.error(f"Failed to start transcription job: {e}")
+# Function to create a transcription job
+def create_transcription_job(job_name, s3_uri, bucket_name, output_key):
+    response = transcribe_client.start_transcription_job(
+        TranscriptionJobName=job_name,
+        Media={'MediaFileUri': s3_uri},
+        MediaFormat='wav',
+        LanguageCode='en-US',
+        OutputBucketName=bucket_name,
+        OutputKey=output_key
+    )
+    return response
 
-# Function to check and get the transcription result
-def get_transcription_result(job_name):
-    transcribe_client = boto3.client('transcribe')
-    while True:
-        result = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
-        status = result['TranscriptionJob']['TranscriptionJobStatus']
-        if status == 'COMPLETED':
-            transcript_uri = result['TranscriptionJob']['Transcript']['TranscriptFileUri']
-            st.success(f"Transcription completed!")
-            return transcript_uri  # Return the URL of the transcription JSON
-        elif status == 'FAILED':
-            st.error("Transcription failed.")
-            return None
-        else:
-            st.info("Transcription in progress...")
-            time.sleep(5)
+# Function to check the status of the transcription job
+def check_transcription_job_status(job_name):
+    response = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
+    return response['TranscriptionJob']['TranscriptionJobStatus']
 
-# Function to download and extract the transcript text from JSON
-def download_and_extract_transcript(transcript_uri):
-    response = requests.get(transcript_uri)
-    transcript_json = response.json()
-    transcript_text = transcript_json['results']['transcripts'][0]['transcript']
-    return transcript_text
+# Streamlit UI components
+st.title("Voice to Text Transcription App")
 
-# Function to generate a unique transcription job name
-def generate_transcribe_job_name(base_name="TranscriptionJob"):
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"{base_name}_{timestamp}"
+st.write("Record your voice, and we will transcribe it for you!")
 
-# Streamlit UI setup
-st.title("Voice to Text Transcription System")
+# Audio recorder in Streamlit
+audio_bytes = st.audio_recorder()
 
-# Record or upload an audio file
-audio_file = st.file_uploader("Upload an audio file", type=["wav"])
-
-if audio_file is not None:
-    # Read the file as bytes
-    audio_bytes = audio_file.read()
+if audio_bytes:
+    st.success("Audio recorded successfully!")
     audio_file_path = save_audio_file(audio_bytes, "recording.wav")
-    st.write(f"Audio file saved at {audio_file_path}")
 
-    # AWS S3 bucket information (Replace with your actual S3 bucket details)
-    bucket_name = 'audiobucketdemo'  # Replace with your actual S3 bucket name
-    s3_key = 'recordings/recording.wav'  # S3 key for the uploaded file
-    upload_to_s3(audio_file_path, bucket_name, s3_key)
+    # Upload to S3
+    bucket_name = "your-s3-bucket-name"  # replace with your S3 bucket name
+    object_name = "recordings/recording.wav"
+    upload_to_s3(audio_file_path, bucket_name, object_name)
+    st.success(f"File uploaded to S3 bucket '{bucket_name}' successfully!")
 
-    # Start transcription job
-    s3_audio_uri = f's3://{bucket_name}/{s3_key}'
-    transcribe_job_name = generate_transcribe_job_name()  # Automatically generate a unique job name
-    start_transcription_job(transcribe_job_name, s3_audio_uri)
+    # Create a transcription job
+    s3_uri = f"s3://{bucket_name}/{object_name}"
+    job_name = "auto-transcribe-job"  # fixed job name
+    output_key = "transcriptions/transcription.json"
+    create_transcription_job(job_name, s3_uri, bucket_name, output_key)
+    st.info("Transcription job created successfully! Please wait...")
 
-    # Fetch transcription result
-    transcript_uri = get_transcription_result(transcribe_job_name)
-    
-    # If transcription completed successfully, download and display the transcript
-    if transcript_uri:
-        transcript_text = download_and_extract_transcript(transcript_uri)
-        st.write("Transcription Result:")
-        st.text_area("Transcript", value=transcript_text, height=200)
+    # Check transcription status
+    status = check_transcription_job_status(job_name)
+    if status == 'COMPLETED':
+        st.success("Transcription completed successfully!")
         
-        # Provide a download button for the transcript
-        st.download_button(
-            label="Download Transcript",
-            data=transcript_text,
-            file_name="transcript.txt",
-            mime="text/plain"
-        )
+        # Construct the URL for the output file in S3
+        output_url = f"https://{bucket_name}.s3.amazonaws.com/{output_key}"
+        st.write("Download your transcription:")
+        st.markdown(f"[Download transcription](output_url)", unsafe_allow_html=True)
+
+    elif status == 'FAILED':
+        st.error("Transcription job failed. Please try again.")
+    else:
+        st.info("Transcription job is in progress. Please wait...")
+
+    # Cleanup local file after processing
+    os.remove(audio_file_path)
